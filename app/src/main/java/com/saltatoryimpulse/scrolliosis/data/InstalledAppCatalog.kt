@@ -151,7 +151,10 @@ class InstalledAppCatalog(context: Context) {
         metadataFile.writeText(json.toString())
     }
 
-    private fun iconFile(packageName: String): File = File(iconDir, "$packageName.png")
+    private fun iconFile(packageName: String): File {
+        val sanitized = packageName.replace('/', '_').replace('\\', '_')
+        return File(iconDir, "$sanitized.png")
+    }
 
     private fun readIconFromDisk(packageName: String): Drawable? {
         val file = iconFile(packageName)
@@ -176,6 +179,7 @@ class InstalledAppCatalog(context: Context) {
         FileOutputStream(file).use { outputStream ->
             bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, outputStream)
         }
+        bitmap.recycle()
 
         memoryIconCache.put(packageName, drawable)
     }

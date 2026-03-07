@@ -27,6 +27,11 @@ class BootReceiver : BroadcastReceiver() {
         if (isBoot) {
             Log.d("ScrolliosisBoot", "System Boot detected: $action. Pinging GateService process.")
 
+            // Only wake the service if accessibility is actually enabled
+            try {
+                if (!PermissionUtils.isAccessibilityServiceEnabled(context)) return
+            } catch (_: Exception) { /* Direct boot: can't check, proceed with wake */ }
+
             // WAKING THE PROCESS:
             // We don't try to manually 'start' the Accessibility Service (the OS does that).
             // Instead, we send a 'wake-up' intent to the service class. This tells the

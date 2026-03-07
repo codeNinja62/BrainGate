@@ -30,6 +30,7 @@ import com.saltatoryimpulse.scrolliosis.data.IKnowledgeRepository
 import org.koin.androidx.compose.get
 import com.saltatoryimpulse.scrolliosis.ui.theme.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -44,6 +45,7 @@ fun GatekeeperScreen(
     // BUG-08: state for shake animation + hint text (BackHandler registered after triggerHapticPulse)
     val shakeOffset = remember { Animatable(0f) }
     var lockedHintVisible by remember { mutableStateOf(false) }
+    var shakeJob by remember { mutableStateOf<Job?>(null) }
 
     val context = LocalContext.current
     val pm = context.packageManager
@@ -77,7 +79,8 @@ fun GatekeeperScreen(
     // SYSTEM TRAP: Disables back button/gestures on all Android versions.
     // BUG-08: no longer silent — shakes the lock icon + shows hint so users understand why nothing happened.
     BackHandler(enabled = true) {
-        scope.launch {
+        shakeJob?.cancel()
+        shakeJob = scope.launch {
             lockedHintVisible = true
             triggerHapticPulse(100, 30)
             repeat(3) {
@@ -110,8 +113,6 @@ fun GatekeeperScreen(
     var currentPrompt by remember(targetPackage) { mutableStateOf(defaultPrompts.random()) }
     var promptLabel by remember(targetPackage) { mutableStateOf("MINDFULNESS CHECK") }
     LaunchedEffect(targetPackage) {
-        currentPrompt = defaultPrompts.random()
-        promptLabel = "MINDFULNESS CHECK"
         val customPrompt = withContext(Dispatchers.IO) { repository.getRandomCustomPrompt() }
         if (customPrompt != null) {
             currentPrompt = customPrompt.summary

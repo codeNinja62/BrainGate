@@ -47,6 +47,11 @@ class MainActivity : ComponentActivity(), KoinComponent {
             isSystemLocked.value = true
         }
 
+        // Pre-set blocked package from intent to skip splash when launched from GateService.
+        intent?.getStringExtra(Constants.EXTRA_BLOCKED_PACKAGE)?.let {
+            blockedPackage.value = it
+        }
+
         setContent {
             // Apply application theme and set up root composition.
             ScrolliosisTheme {
@@ -70,9 +75,15 @@ class MainActivity : ComponentActivity(), KoinComponent {
                             finish()
                         })
                     } else {
+                        val startDest = remember {
+                            when {
+                                initialRoute == "gatekeeper_screen" && blockedPackage.value.isNotEmpty() -> "gatekeeper_screen"
+                                else -> "splash"
+                            }
+                        }
                         NavHost(
                             navController = currentNavController,
-                            startDestination = "splash"
+                            startDestination = startDest
                         ) {
                             composable("splash") {
                                 SplashScreen(onTimeout = {
@@ -101,7 +112,7 @@ class MainActivity : ComponentActivity(), KoinComponent {
                                         if (!requiresOnboarding()) {
                                             PermissionUtils.clearSetupGrace(this@MainActivity)
                                             currentNavController.navigate("home") {
-                                                popUpTo("onboarding") { inclusive = true }
+                                                popUpTo(0) { inclusive = true }
                                             }
                                         }
                                     }
@@ -171,20 +182,20 @@ class MainActivity : ComponentActivity(), KoinComponent {
             route == "gatekeeper_screen" && !pkg.isNullOrEmpty() -> {
                 blockedPackage.value = pkg!!
                 nav?.navigate("gatekeeper_screen") {
-                    popUpTo("splash") { inclusive = true }
+                    popUpTo(0) { inclusive = true }
                     launchSingleTop = true
                 }
             }
             // If required permissions are missing, show onboarding flow.
             needsOnboarding -> {
                 nav?.navigate("welcome") {
-                    popUpTo("splash") { inclusive = true }
+                    popUpTo(0) { inclusive = true }
                 }
             }
             // Default: normal home route.
             else -> {
                 nav?.navigate("home") {
-                    popUpTo("splash") { inclusive = true }
+                    popUpTo(0) { inclusive = true }
                 }
             }
         }
@@ -200,6 +211,9 @@ class MainActivity : ComponentActivity(), KoinComponent {
     }
 
     private fun performUnlock(packageToLaunch: String) {
+        // Set pending unlock synchronously to prevent race with accessibility events
+        GateService.pendingUnlocks[packageToLaunch] = System.currentTimeMillis() + Constants.UNLOCK_DURATION_MS
+
         val unlockIntent = Intent(Constants.ACTION_UNLOCK).apply {
             putExtra(Constants.EXTRA_PACKAGE_NAME, packageToLaunch)
             setPackage(packageName) // Security: Prevent broadcast hijacking

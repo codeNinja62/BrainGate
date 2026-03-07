@@ -105,7 +105,7 @@ fun AppSelectionScreen(onBack: () -> Unit) {
             context,
             receiver,
             filter,
-            ContextCompat.RECEIVER_NOT_EXPORTED
+            ContextCompat.RECEIVER_EXPORTED
         )
         onDispose {
             try {

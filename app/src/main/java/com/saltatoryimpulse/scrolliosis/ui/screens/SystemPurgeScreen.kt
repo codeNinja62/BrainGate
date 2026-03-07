@@ -21,6 +21,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.saltatoryimpulse.scrolliosis.ui.theme.*
+import java.util.Locale
 import kotlinx.coroutines.delay
 
 @Composable
@@ -133,7 +134,7 @@ fun SystemPurgeScreen(onComplete: () -> Unit) {
 
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    text = String.format("%02d:%02d", secondsLeft / 60, secondsLeft % 60),
+                    text = String.format(Locale.US, "%02d:%02d", secondsLeft / 60, secondsLeft % 60),
                     style = MaterialTheme.typography.displayMedium.copy(fontWeight = FontWeight.Black),
                     color = TextHighEmphasis
                 )

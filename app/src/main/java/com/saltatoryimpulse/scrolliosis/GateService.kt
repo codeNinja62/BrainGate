@@ -23,6 +23,10 @@ import org.koin.core.component.inject
 
 class GateService : AccessibilityService(), KoinComponent {
 
+    companion object {
+        val pendingUnlocks = ConcurrentHashMap<String, Long>()
+    }
+
     private val repository: com.saltatoryimpulse.scrolliosis.data.IKnowledgeRepository by inject()
     private val overlayController: OverlayController by inject()
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -33,7 +37,7 @@ class GateService : AccessibilityService(), KoinComponent {
 
     // Grace period after service start to avoid blocking during onboarding/permission grant
     private var serviceStartTime = 0L
-    private var lastForegroundPackage: String? = null
+    @Volatile private var lastForegroundPackage: String? = null
     private var usageStatsMonitorJob: Job? = null
 
     private val unlockedApps = ConcurrentHashMap<String, Long>()
@@ -102,6 +106,11 @@ class GateService : AccessibilityService(), KoinComponent {
         if (!isForegroundSignal) return
 
         val packageName = event.packageName?.toString() ?: return
+
+        // Content/window-changed events fire hundreds of times per second during scrolling.
+        // Only process state-changed for the same foreground package to avoid coroutine flooding.
+        if (eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && packageName == lastForegroundPackage) return
+
         handleForegroundPackage(packageName, event)
     }
 
@@ -116,6 +125,11 @@ class GateService : AccessibilityService(), KoinComponent {
 
         val now = System.currentTimeMillis()
         unlockedApps.entries.removeIf { it.value < now }
+
+        // Transfer synchronous pending unlocks from MainActivity
+        pendingUnlocks.remove(packageName)?.let { expiry ->
+            if (expiry > now) unlockedApps[packageName] = expiry
+        }
 
         if (unlockedApps.containsKey(packageName)) {
             updateTimerVisibility()
@@ -156,6 +170,9 @@ class GateService : AccessibilityService(), KoinComponent {
             fastText.contains(appPackageName.lowercase())
 
         if (targetsScrolliosis) return true
+
+        // Full tree scan only on state-changed events to avoid ANR from frequent content updates
+        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return false
 
         val rootNode = rootInActiveWindow ?: return false
         return try {
@@ -199,8 +216,8 @@ class GateService : AccessibilityService(), KoinComponent {
 
     private fun packageName(): String = applicationContext.packageName
 
-    private fun scanNodeForAnyText(node: AccessibilityNodeInfo?, targetTexts: List<String>): Boolean {
-        if (node == null) return false
+    private fun scanNodeForAnyText(node: AccessibilityNodeInfo?, targetTexts: List<String>, maxDepth: Int = 20): Boolean {
+        if (node == null || maxDepth <= 0) return false
 
         val text = node.text?.toString()?.lowercase() ?: ""
         val desc = node.contentDescription?.toString()?.lowercase() ?: ""
@@ -211,7 +228,7 @@ class GateService : AccessibilityService(), KoinComponent {
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             try {
-                val found = scanNodeForAnyText(child, targetTexts)
+                val found = scanNodeForAnyText(child, targetTexts, maxDepth - 1)
                 if (found) return true
             } finally {
                 safeReleaseNode(child)
@@ -256,7 +273,10 @@ class GateService : AccessibilityService(), KoinComponent {
         serviceScope.launch {
             if (repository.isAppBlocked(packageName)) {
                 withContext(Dispatchers.Main) {
+                    // Re-check: the app may have been unlocked while the DB query ran
                     val now = System.currentTimeMillis()
+                    unlockedApps.entries.removeIf { it.value < now }
+                    if (unlockedApps.containsKey(packageName)) return@withContext
                     if (now < cooldownEndTime) {
                         overlayController.showBlockingShield()
                         silentKill()

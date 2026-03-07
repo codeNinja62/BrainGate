@@ -10,6 +10,7 @@ import android.widget.TextView
 import kotlinx.coroutines.*
 import android.graphics.Color as AndroidColor
 import android.util.Log
+import java.util.Locale
 import com.saltatoryimpulse.scrolliosis.overlay.OverlayConfig
 import com.saltatoryimpulse.scrolliosis.Constants
 
@@ -33,21 +34,21 @@ class OverlayController(
     private var timerJob: Job? = null
 
     fun prepareBlockingShield() {
-        scope.launch(Dispatchers.Main) {
+        scope.launch(Dispatchers.Main.immediate) {
             ensureBlockingShieldAttached()
             setBlockingShieldVisible(false)
         }
     }
 
     fun showBlockingShield() {
-        scope.launch(Dispatchers.Main) {
+        scope.launch(Dispatchers.Main.immediate) {
             ensureBlockingShieldAttached()
             setBlockingShieldVisible(true)
         }
     }
 
     fun removeBlockingShield() {
-        scope.launch(Dispatchers.Main) {
+        scope.launch(Dispatchers.Main.immediate) {
             setBlockingShieldVisible(false)
         }
     }
@@ -102,7 +103,7 @@ class OverlayController(
     }
 
     fun showCustomToast(message: String) {
-        scope.launch(Dispatchers.Main) {
+        scope.launch(Dispatchers.Main.immediate) {
             toastJob?.cancel()
             removeCustomToast()
 
@@ -145,10 +146,12 @@ class OverlayController(
             return
         }
 
-        scope.launch(Dispatchers.Main) {
+        scope.launch(Dispatchers.Main.immediate) {
+            if (timerView != null) return@launch
+            val now = System.currentTimeMillis()
+            val initSecs = ((expirationMs - now) / 1000).toInt().coerceAtLeast(0)
             timerView = TextView(context).apply {
-                // BUG-14: show "BG" label on first line so users know what this overlay is
-                text = "BG\n--:--"
+                text = "BG\n${String.format(Locale.US, "%02d:%02d", initSecs / 60, initSecs % 60)}"
                 setTextColor(AndroidColor.WHITE)
                 textSize = OverlayConfig.TIMER_TEXT_SIZE
                 setPadding(OverlayConfig.TIMER_PADDING_HORIZONTAL, OverlayConfig.TIMER_PADDING_VERTICAL,
@@ -189,7 +192,7 @@ class OverlayController(
 
     private fun startTimerLoop(expirationMs: Long, onExpire: () -> Unit) {
         timerJob?.cancel()
-        timerJob = scope.launch(Dispatchers.Main) {
+        timerJob = scope.launch(Dispatchers.Main.immediate) {
             while (isActive) {
                 val now = System.currentTimeMillis()
                 if (now >= expirationMs) {
@@ -201,7 +204,7 @@ class OverlayController(
                 val secondsLeft = ((expirationMs - now) / 1000).toInt()
                 timerView?.apply {
                     // BUG-14: prefix with "BG" label so the bubble is identifiable
-                    text = "BG\n${String.format("%02d:%02d", secondsLeft / 60, secondsLeft % 60)}"
+                    text = "BG\n${String.format(Locale.US, "%02d:%02d", secondsLeft / 60, secondsLeft % 60)}"
                     (background as? GradientDrawable)?.setColor(
                         if (secondsLeft <= 30) AndroidColor.parseColor(OverlayConfig.TIMER_BG_WARNING)
                         else AndroidColor.parseColor(OverlayConfig.TIMER_BG_NORMAL)
