@@ -17,6 +17,7 @@ object Constants {
     const val SETUP_GRACE_DURATION_MS = 3 * 60 * 1000L
     const val FOREGROUND_POLL_INTERVAL_MS = 150L
     const val BLOCK_INTERCEPT_DEBOUNCE_MS = 350L
+    const val POST_BLOCK_SUPPRESS_MS = 3_000L
     const val SERVICE_REVIVE_DELAY_MS = 1_000L
     const val TOAST_DURATION_MS = 2500L
     const val TIMER_REFRESH_MS = 1000L

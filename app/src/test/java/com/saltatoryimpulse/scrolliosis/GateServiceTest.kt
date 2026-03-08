@@ -88,10 +88,14 @@ class GateServiceTest {
         cooldownField.isAccessible = true
         cooldownField.setLong(service, 0L)
 
-        // Invoke private method checkBlockingLogic for the blocked package
-        val method = service.javaClass.getDeclaredMethod("checkBlockingLogic", String::class.java)
+        // Invoke private method checkBlockingLogic for the blocked package.
+        // fromAccessibility=true bypasses the post-block suppress guard so the test is not
+        // affected by the usage-stats-lag suppression window.
+        val method = service.javaClass.getDeclaredMethod(
+            "checkBlockingLogic", String::class.java, Boolean::class.javaPrimitiveType
+        )
         method.isAccessible = true
-        method.invoke(service, "com.example.app")
+        method.invoke(service, "com.example.app", true)
 
         // Advance dispatcher to execute launched coroutine
         testScope.testScheduler.advanceUntilIdle()

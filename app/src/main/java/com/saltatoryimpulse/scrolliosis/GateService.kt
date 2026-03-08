@@ -35,6 +35,15 @@ class GateService : AccessibilityService(), KoinComponent {
     private var lastInterceptTime = 0L
     private var lastToastTime = 0L
 
+    // Per-package dedup: prevents multiple rapid events for the same app from each launching a coroutine.
+    private var lastBlockCheckPackage: String? = null
+    private var lastBlockCheckTime = 0L
+
+    // Per-package post-block suppression: outlasts the usage-stats reporting lag (~1-3 s) so the
+    // usage-stats monitor cannot re-fire triggerHardBlock while the enforcement screen is already showing.
+    private var lastHardBlockedPackage: String? = null
+    private var lastHardBlockTime = 0L
+
     // Grace period after service start to avoid blocking during onboarding/permission grant
     private var serviceStartTime = 0L
     @Volatile private var lastForegroundPackage: String? = null
@@ -135,7 +144,7 @@ class GateService : AccessibilityService(), KoinComponent {
             updateTimerVisibility()
         } else {
             removeFloatingTimer()
-            checkBlockingLogic(packageName)
+            checkBlockingLogic(packageName, fromAccessibility = event != null)
         }
     }
 
@@ -261,6 +270,10 @@ class GateService : AccessibilityService(), KoinComponent {
 
     private fun handleSettingsInterception() {
         val now = System.currentTimeMillis()
+        // Debounce: multiple window-state-changed events for the same settings screen must not each
+        // call triggerHardBlock.
+        if (now - lastInterceptTime <= Constants.BLOCK_INTERCEPT_DEBOUNCE_MS) return
+        lastInterceptTime = now
         if (now < cooldownEndTime) {
             silentKill()
             showCustomToast("System modifications restricted during active focus.")
@@ -269,23 +282,40 @@ class GateService : AccessibilityService(), KoinComponent {
         }
     }
 
-    private fun checkBlockingLogic(packageName: String) {
+    private fun checkBlockingLogic(packageName: String, fromAccessibility: Boolean = false) {
+        val now = System.currentTimeMillis()
+
+        // Per-package dedup: if we already dispatched a check for this exact package within the
+        // debounce window, skip launching another coroutine. This prevents multiple rapid
+        // TYPE_WINDOW_STATE_CHANGED events (app launch, splash, main activity, etc.) from each
+        // spawning a DB-query coroutine with a stale lastInterceptTime.
+        if (packageName == lastBlockCheckPackage && now - lastBlockCheckTime <= Constants.BLOCK_INTERCEPT_DEBOUNCE_MS) return
+
+        // Post-block suppression (non-accessibility path only): after triggerHardBlock fires, the
+        // usage-stats API lags 1-3 seconds behind reality and keeps reporting the blocked app as
+        // foreground. Suppress re-fires for that package until the lag clears. Accessibility events
+        // bypass this guard because they reflect the true current foreground app.
+        if (!fromAccessibility && packageName == lastHardBlockedPackage && now - lastHardBlockTime <= Constants.POST_BLOCK_SUPPRESS_MS) return
+
+        lastBlockCheckPackage = packageName
+        lastBlockCheckTime = now
+
         serviceScope.launch {
             if (repository.isAppBlocked(packageName)) {
                 withContext(Dispatchers.Main) {
                     // Re-check: the app may have been unlocked while the DB query ran
-                    val now = System.currentTimeMillis()
-                    unlockedApps.entries.removeIf { it.value < now }
+                    val nowInner = System.currentTimeMillis()
+                    unlockedApps.entries.removeIf { it.value < nowInner }
                     if (unlockedApps.containsKey(packageName)) return@withContext
-                    if (now < cooldownEndTime) {
+                    if (nowInner < cooldownEndTime) {
                         overlayController.showBlockingShield()
                         silentKill()
-                                    if (now - lastToastTime > Constants.COOLDOWN_TOAST_INTERVAL_MS) {
-                                        lastToastTime = now
-                                        showCustomToast("Gate locked. Cooldown active.")
-                                    }
-                    } else if (now - lastInterceptTime > Constants.BLOCK_INTERCEPT_DEBOUNCE_MS) {
-                        lastInterceptTime = now
+                        if (nowInner - lastToastTime > Constants.COOLDOWN_TOAST_INTERVAL_MS) {
+                            lastToastTime = nowInner
+                            showCustomToast("Gate locked. Cooldown active.")
+                        }
+                    } else if (nowInner - lastInterceptTime > Constants.BLOCK_INTERCEPT_DEBOUNCE_MS) {
+                        lastInterceptTime = nowInner
                         triggerHardBlock(packageName)
                     }
                 }
@@ -294,6 +324,9 @@ class GateService : AccessibilityService(), KoinComponent {
     }
 
     private fun triggerHardBlock(packageName: String, targetRoute: String = "gatekeeper_screen") {
+        // Record the hard-block so checkBlockingLogic can suppress usage-stats re-fires.
+        lastHardBlockedPackage = packageName
+        lastHardBlockTime = System.currentTimeMillis()
         overlayController.showBlockingShield()
         haltActiveMediaPlayback()
 
